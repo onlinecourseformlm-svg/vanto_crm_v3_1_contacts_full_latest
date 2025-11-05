@@ -1,126 +1,111 @@
 import streamlit as st
-import sqlite3
+import psycopg2
 import pandas as pd
 from datetime import datetime
-import os
 
-# Simple public form only
-st.set_page_config(page_title="APLGO Registration", page_icon="🌟", layout="centered")
-
-# Database connection
-import psycopg2
-import streamlit as st
-
+# -----------------------
+# DATABASE CONNECTION
+# -----------------------
 def get_connection():
-    return psycopg2.connect(
-        host=st.secrets["supabase"]["host"],
-        database=st.secrets["supabase"]["database"],
-        user=st.secrets["supabase"]["user"],
-        password=st.secrets["supabase"]["password"],
-        port=st.secrets["supabase"]["port"]
-    )
+    try:
+        conn = psycopg2.connect(
+            host=st.secrets["supabase"]["host"],
+            database=st.secrets["supabase"]["database"],
+            user=st.secrets["supabase"]["user"],
+            password=st.secrets["supabase"]["password"],
+            port=st.secrets["supabase"]["port"]
+        )
+        return conn
+    except Exception as e:
+        st.error(f"Database connection failed: {e}")
+        return None
 
-
-# Your existing insert function
-def safe_insert_contact(contact_data):
-    PROSPECT_COLUMNS = [
-        "DateCaptured", "State", "Country", "Province", "City",
-        "FullName", "PhoneNumber", "EmailAddress", "InterestLevel",
-        "AssignedTo", "ActionTaken", "NextAction", "LeadTemperature",
-        "CommunicationStatus", "SponsorName", "LeadType",
-        "AssociateStatus", "RegistrationStatus", "APLGoID", "AccountPassword"
-    ]
-    
+# -----------------------
+# SAFE INSERT FUNCTION
+# -----------------------
+def safe_insert_contact(data):
     conn = get_connection()
+    if conn is None:
+        return False, "Could not connect to database."
+
     cur = conn.cursor()
-    
-    # Your duplicate checking logic here
-    phone = contact_data.get('PhoneNumber', '')
-    email = contact_data.get('EmailAddress', '')
-    
-    if phone:
-        cur.execute("SELECT id FROM contacts WHERE PhoneNumber = ?", (phone,))
-        if cur.fetchone():
-            conn.close()
-            return False, "Duplicate phone number", None
-    
-    # Insert logic
-    for col in PROSPECT_COLUMNS:
-        if col not in contact_data:
-            contact_data[col] = ""
-    
-    if not contact_data.get("DateCaptured"):
-        contact_data["DateCaptured"] = datetime.now().strftime("%Y-%m-%d")
-    
-    columns = ", ".join(PROSPECT_COLUMNS)
-    placeholders = ", ".join(["?" for _ in PROSPECT_COLUMNS])
-    values = [contact_data[col] for col in PROSPECT_COLUMNS]
-    
-    cur.execute(f"INSERT INTO contacts ({columns}) VALUES ({placeholders})", values)
-    contact_id = cur.lastrowid
-    conn.commit()
-    conn.close()
-    
-    return True, "Success", contact_id
+    try:
+        # Check if contact exists by phone number
+        cur.execute("SELECT id FROM contacts WHERE PhoneNumber = %s", (data["PhoneNumber"],))
+        existing = cur.fetchone()
 
-# Public Form UI
-st.title("🌟 Join APLGO South Africa")
-st.write("Complete the form below to get started")
+        if existing:
+            return False, "This phone number is already registered."
 
-with st.form("public_registration"):
+        # Insert new contact
+        cur.execute("""
+            INSERT INTO contacts 
+            (FullName, PhoneNumber, EmailAddress, City, Province, Country, SponsorName, InterestLevel, DateAdded)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (
+            data["FullName"],
+            data["PhoneNumber"],
+            data["EmailAddress"],
+            data["City"],
+            data["Province"],
+            data["Country"],
+            data["SponsorName"],
+            data["InterestLevel"],
+            datetime.now()
+        ))
+
+        conn.commit()
+        return True, "Contact successfully added!"
+    except Exception as e:
+        conn.rollback()
+        return False, f"Error inserting contact: {e}"
+    finally:
+        cur.close()
+        conn.close()
+
+# -----------------------
+# STREAMLIT FRONTEND
+# -----------------------
+st.set_page_config(page_title="Join APLGO South Africa", layout="centered")
+
+st.markdown("<h2 style='text-align:center;'>🌟 Join APLGO South Africa</h2>", unsafe_allow_html=True)
+st.markdown("Complete the form below to get started:")
+
+with st.form("prospect_form"):
     st.subheader("Your Information")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        full_name = st.text_input("Full Name *", placeholder="Enter your full name")
-        phone = st.text_input("Phone Number *", placeholder="0712345678")
-    
-    with col2:
-        email = st.text_input("Email Address", placeholder="your@email.com")
-        city = st.text_input("City", placeholder="Your city")
-    
+    full_name = st.text_input("Full Name *")
+    phone = st.text_input("Phone Number *", placeholder="e.g., 0712345678")
+    email = st.text_input("Email Address", placeholder="your@email.com")
+
     st.subheader("Location Details")
-    col3, col4 = st.columns(2)
-    with col3:
-        province = st.text_input("Province", placeholder="Gauteng, Western Cape, etc.")
-    with col4:
-        country = st.text_input("Country", value="South Africa")
-    
+    city = st.text_input("City", placeholder="Your city")
+    province = st.text_input("Province", placeholder="Gauteng, Western Cape, etc.")
+    country = st.text_input("Country", value="South Africa")
+
     st.subheader("APLGO Information")
-    sponsor_name = st.text_input("Sponsor Name (if any)", placeholder="Who referred you?")
-    interest = st.selectbox("Interest Level", ["Very Interested", "Somewhat Interested", "Just Curious"])
-    
-    st.markdown("**Required fields*")
+    sponsor = st.text_input("Sponsor Name (if any)")
+    interest = st.selectbox("Interest Level", ["Just Curious", "Interested", "Very Interested"])
+
     submitted = st.form_submit_button("🚀 Join APLGO Now")
-    
+
     if submitted:
         if not full_name or not phone:
-            st.error("Please fill in Name and Phone Number")
+            st.error("Please fill in all required fields marked with *.")
         else:
             prospect_data = {
-                "FullName": full_name,
-                "PhoneNumber": phone,
-                "EmailAddress": email,
-                "City": city,
-                "Province": province,
-                "State": province,
-                "Country": country,
-                "InterestLevel": interest,
-                "SponsorName": sponsor_name,
-                "LeadTemperature": "Warm",
-                "CommunicationStatus": "New",
-                "RegistrationStatus": "Not Registered",
-                "ActionTaken": "Public Form Submission",
-                "NextAction": "Follow Up",
-                "LeadType": "Prospect"
+                "FullName": full_name.strip(),
+                "PhoneNumber": phone.strip(),
+                "EmailAddress": email.strip(),
+                "City": city.strip(),
+                "Province": province.strip(),
+                "Country": country.strip(),
+                "SponsorName": sponsor.strip(),
+                "InterestLevel": interest
             }
-            
-            success, message, contact_id = safe_insert_contact(prospect_data)
-            
+            success, message = safe_insert_contact(prospect_data)
             if success:
-                st.success("🎉 Welcome to APLGO! We'll contact you within 24 hours.")
+                st.success(message)
                 st.balloons()
-                st.info("**Next Steps:** Check your WhatsApp for updates from our team")
             else:
+                st.error(message)
 
-                st.warning("📱 We already have your details! Our team will contact you soon.")
