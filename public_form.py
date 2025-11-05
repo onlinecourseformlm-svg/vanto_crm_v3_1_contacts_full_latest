@@ -8,8 +8,18 @@ import os
 st.set_page_config(page_title="APLGO Registration", page_icon="🌟", layout="centered")
 
 # Database connection
+import psycopg2
+import streamlit as st
+
 def get_connection():
-    return sqlite3.connect("crm.sqlite3")
+    return psycopg2.connect(
+        host=st.secrets["supabase"]["host"],
+        database=st.secrets["supabase"]["database"],
+        user=st.secrets["supabase"]["user"],
+        password=st.secrets["supabase"]["password"],
+        port=st.secrets["supabase"]["port"]
+    )
+
 
 # Your existing insert function
 def safe_insert_contact(contact_data):
@@ -112,4 +122,5 @@ with st.form("public_registration"):
                 st.balloons()
                 st.info("**Next Steps:** Check your WhatsApp for updates from our team")
             else:
+
                 st.warning("📱 We already have your details! Our team will contact you soon.")
